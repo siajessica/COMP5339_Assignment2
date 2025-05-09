@@ -1,6 +1,13 @@
 import requests
 import pandas as pd
 import argparse
+import os
+import pandas as pd
+import numpy
+import csv
+import requests
+from bs4 import BeautifulSoup
+import re
 
 from datetime import datetime
 def crawler(url , params = None, headers = None, to_json = False):
@@ -69,6 +76,26 @@ def FuelStationIntegration(access_token, API_KEY_FUEL, get_new_price = True):
 
     return merged_df
 
+def cleaning(df):
+    # Drop rows with any missing values
+    df = df.dropna()
+
+    # Drop 'code' column if identical to 'stationcode'
+    if 'code' in df.columns and (df['code'] == df['stationcode']).all():
+        df = df.drop(columns=['code'])
+
+    # Drop exact duplicate rows on selected subset
+    df = df.drop_duplicates(subset=['brand', 'stationid', 'address', 'fueltype', 'lastupdated'])
+
+    # Convert date column format
+    df['lastupdated'] = pd.to_datetime(df['lastupdated'], dayfirst=True)
+
+    # Remove rows where 'price' is non-positive
+    df = df[df['price'] > 0]
+
+    return df
+
+
 
 if __name__ == "__main__":
     API_KEY_FUEL = "66e33UefJsXEALZf7cKeTjGP17qXdOx8"
@@ -84,4 +111,5 @@ if __name__ == "__main__":
     access_token = GetFuelAccessToken(AUTH_FUEL)
     
     df_station_details = FuelStationIntegration(access_token, API_KEY_FUEL, get_new_price=args.get_new_price)
+    cleaning(df_station_details)
     df_station_details.to_csv(args.output, index=False)
