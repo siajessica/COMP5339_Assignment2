@@ -2,6 +2,7 @@
 Simple subsriber to consume data from broker
 This function just consume the data from broker and save it to JSON to make sure it works
 Just to make sure broker is running
+Returns JSON file from broker
 """
 
 import paho.mqtt.client as mqtt
