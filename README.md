@@ -30,10 +30,28 @@ This script retrieves fuel station and price data from the NSW Government API an
 Make sure you have:
 
 - Python 3.x installed
-- Required dependencies (e.g. `requests`, `pandas`)
+- MQTT Broker e.g. Mosquitto Broker 🦟 from [Mosquitto Eclipse](https://mosquitto.org/download/)
+- Required dependencies from requirements.txt(e.g. `requests`, `pandas`, `paho-mqtt`, `streamlit` ...)
 
-### 📦 Running the Script
-
+### 📦 Run Independent API Call 
 ```bash
-cd <your_directory>
-python3 DataIntegration.py --get_new_price <True|False> --output <output_filename.csv>
+cd <Code Location>
+python DataIntegration.py --get_new_price <True|False> --output <output_filename.csv>
+```
+
+### 📦 MQTT
+#### 📦 Run MQTT Broker
+```bash
+cd <MQTT Broker .exe location> or add mosquitto path to environment path
+mosquitto -v
+```
+#### 📦 Run Publisher Function
+```bash
+cd <Code Location>
+python simple_retrive_publish 
+```
+#### 📦 Run Subscriber Function
+In different terminal
+```bash
+streamlit run simple_test_subscriber.py
+```
