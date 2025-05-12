@@ -1,3 +1,8 @@
+"""
+Retrieve data using API, save it as .csv, preprocess and publish it to MQTT Broker 
+Make sure MQTT is running 
+"""
+
 import requests
 import pandas as pd
 import json
@@ -124,7 +129,7 @@ def upsert(df, current_df):
 
 def fetch_publish():
     """
-    Main function for MTQQ broker
+    Main function for MQTT broker
     Run GetFuelAccessToken, safe the output to new dataframe as new .csv in df
     Send output from df to MTQQ broker in batch with 0.1 delay
     """
@@ -139,7 +144,7 @@ def fetch_publish():
         df = cleaning(df)
         df.to_csv(FILENAME, index=False)
         print(f"Saved {len(df)} records to {FILENAME}")
-        batch_size = max(1, len(df) // 1)
+        batch_size = max(1, len(df) // 1) # send all in a single batch
         # Publish in batches
         for i in range(0, len(df), batch_size):
             batch_df = df.iloc[i:i + batch_size].copy()
