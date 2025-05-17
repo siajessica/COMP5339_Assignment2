@@ -1,4 +1,4 @@
-.PHONY: broker publisher subcriber clean
+.PHONY: broker publisher subcriber clean used kill
 
 broker:
 	mosquitto -v
@@ -11,3 +11,10 @@ app:
 
 clean:
 	rm -f *.csv
+	rm -f *.json
+
+used:
+	sudo lsof -i :1883
+
+kill:
+	sudo kill $(PID)
