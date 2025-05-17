@@ -43,17 +43,15 @@ python DataIntegration.py --get_new_price <True|False> --output <output_filename
 #### 📦 Run MQTT Broker
 Add mosquitto path to environment path or call it directly using
 ```bash
-cd <MQTT_Broker_location> 
-mosquitto -v
+make broker
 ```
 #### 📦 Run Publisher Function
 Make sure broker is already running
 ```bash
-cd <Code_Location>
-python simple_retrive_publish.py
+make publisher
 ```
 #### 📦 Run Subscriber Function
 Run it in different terminal
 ```bash
-streamlit run simple_test_subscriber.py
+make app
 ```
