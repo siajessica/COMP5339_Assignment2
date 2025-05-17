@@ -1,15 +1,31 @@
 import paho.mqtt.client as mqtt
 import json
 import os
+import pandas as pd
 import streamlit as st
 import folium
 from streamlit_folium import st_folium
+from threading import Thread
+import queue
 
-# CONFIG
+# MWTT CONFIG
 MQTT_BROKER = "localhost"
 MQTT_TOPIC = "NSW_fuel/all"
 OUTPUT_FILE = "received_fuel_data.json"
 
+# STREAMLIT CONFIG
+if 'connected' not in st.session_state: # Check if connected to MQTT
+    st.session_state.connected = False
+if 'first_call' not in st.session_state: # Check if it's the first call or not
+    st.session_state.first_call = False
+if 'data' not in st.session_state: # Data To be Drawn 
+    st.session_state.data = []
+if 'message_queue' not in st.session_state:
+    st.session_state.message_queue = queue.Queue()
+if 'map_center' not in st.session_state:
+    st.session_state.map_center = [-31.2532, 146.9211]
+
+################################################# MAJOR CHANGES NEEDED
 fuel_records = []
 
 if os.path.exists(OUTPUT_FILE):
@@ -24,6 +40,8 @@ def save_to_file(data):
         json.dump(data, f, indent=2)
     print(f"Data saved to {OUTPUT_FILE}")
 
+############################################################# UNTIL HERE
+
 def on_connect(client, userdata, flags, rc):
     if rc == 0:
         print("Connected to MQTT Broker!")
@@ -31,6 +49,7 @@ def on_connect(client, userdata, flags, rc):
     else:
         print("Connection failed. Code:", rc)
 
+##################################### NEED TO CHANGE SOME - DATA
 def on_message(client, userdata, msg):
     global fuel_records
     print(f"\nMessage received on topic '{msg.topic}':")
@@ -61,27 +80,32 @@ def on_message(client, userdata, msg):
     except json.JSONDecodeError:
         print("Error decoding JSON payload:", msg.payload)
 
-# Create client and bind callbacks
-client = mqtt.Client()
-client.on_connect = on_connect
-client.on_message = on_message
+#################################################################### UNTIL HERE
 
-# Connect and listen
-client.connect(MQTT_BROKER, 1883, 60)
-print("Listening for fuel updates... Press Ctrl+C to exit.")
-client.loop_forever()
+def start_mqtt():
+    # Create client and bind callbacks
+    client = mqtt.Client()
+    client.on_connect = on_connect
+    client.on_message = on_message
 
-# m = folium.Map(location=[-31.2532, 146.9211], zoom_start=8)
-# fg = folium.FeatureGroup(name="Markers")
-# for marker in st.session_state["markers"]:
-#     fg.add_child(marker)
+    # Connect and listen
+    client.connect(MQTT_BROKER, 1883, 60)
+    print("Listening for fuel updates... Press Ctrl+C to exit.")
+    client.loop_forever()
 
-# st_folium(
-#     m,
-#     center=st.session_state["center"],
-#     zoom=st.session_state["zoom"],
-#     key="new",
-#     feature_group_to_add=fg,
-#     height=400,
-#     width=700,
-# )
+# Visualization of the Map
+def create_map():
+    if st.session_state.first_call:
+        pass
+    else:
+        pass
+
+# Precaution for Threading
+def main():
+    # Start the MQTT Subcriber (Blocking OS) running on the background
+    if not st.session_state['connected']:
+        Thread(target=start_mqtt, daemon=True).start()
+        st.session_state.mqtt_started = True
+
+if __name__ == "__main__":
+    main()
