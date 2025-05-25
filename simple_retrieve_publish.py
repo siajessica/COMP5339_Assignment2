@@ -121,43 +121,92 @@ def cleaning(df):
     df = df[df['price'] > 0]
     return df
 
-def upsert(df, current_df):
-    combined_df = pd.concat([current_df, df], ignore_index=True)
-    merged_df = combined_df.drop_duplicates(subset=['stationcode', 'fueltype'], keep='last')
-    merged_df.to_csv(FILENAME, index=False)
-    return df
+def upsert(df_new, df_existing, filename=FILENAME):
+    """
+    Upserts new data into the existing CSV and returns only the rows that
+    are new or have changed.
+    """
+    keys = ['stationcode', 'fueltype']
+    if os.path.exists(filename):
+        df_existing = pd.read_csv(filename)
+        # Combine and keep the latest records
+        df_combined = pd.concat([df_existing, df_new], ignore_index=True)
+        df_updated_all = df_combined.drop_duplicates(subset=keys, keep='last')
+    else:
+        df_updated_all = df_new
+
+    df_updated_all.to_csv(filename, index=False)
+    print(f"Saved {len(df_updated_all)} total records to {filename}")
+    # For publishing, we only send new or changed data
+    return df_new
+
+def to_geojson(row):
+    """
+    Converts a single DataFrame row into a GeoJSON Feature dictionary.
+    """
+    latitude = row.get('location.latitude')
+    longitude = row.get('location.longitude')
+
+    # check geometry
+    if pd.isna(latitude) or pd.isna(longitude):
+        return None
+
+    feature = {
+        "type": "Feature",
+        "geometry": {
+            "type": "Point",
+            "coordinates": [float(longitude), float(latitude)]
+        },
+        "properties": {
+            # Extract all other columns into the properties dict
+            **row.drop(['location.latitude', 'location.longitude']).to_dict()
+        }
+    }
+    return feature
 
 def fetch_publish():
+    """This function retrieves fuel station data from the API, cleans it, and publishes it to an MQTT topic.
+    IF FIRST_RUN: GET ALL DATA from /prices API
+    ELSE: GET ONLY NEW/CHANGED DATA from prices/new API
+    as GEOJSON
     """
-    Main function for MQTT broker
-    Run GetFuelAccessToken, safe the output to new dataframe as new .csv in df
-    Send output from df to MTQQ broker in batch with 0.1 delay
-    """
+    global FIRST_RUN
     access_token = GetFuelAccessToken(AUTH_FUEL)
-    df = FuelStationIntegration(access_token, API_KEY_FUEL, get_new_price=not FIRST_RUN)
-    #df.to_csv(FILENAME, index=False)
-    if df.empty:
-        print("No new data found, Waiting for API call...")
+    df_api = FuelStationIntegration(access_token, API_KEY_FUEL, get_new_price=not FIRST_RUN)
+    if df_api.empty:
+        print("No data retrieved from API. Waiting for next interval.")
         return
-    else: 
-        print(df.head)
-        df = cleaning(df)
-        df.to_csv(FILENAME, index=False)
-        print(f"Saved {len(df)} records to {FILENAME}")
-        batch_size = max(1, len(df) // 1) # send all in a single batch
-        # Publish in batches
-        for i in range(0, len(df), batch_size):
-            batch_df = df.iloc[i:i + batch_size].copy()
-            batch_records = []
-            for _, row in batch_df.iterrows():
-                row_dict = row.to_dict()
-                batch_records.append(row_dict)
-            client.publish(MQTT_TOPIC, json.dumps(batch_records))
-            print(f" Published batch {i // batch_size + 1}: {len(batch_records)} records")
+    df_cleaned = cleaning(df_api)
+    
+    if FIRST_RUN:
+        # On the first run, all data is new.
+        df_to_publish = df_cleaned
+        df_cleaned.to_csv(FILENAME, index=False)
+        print(f"First run: Saved {len(df_cleaned)} initial records to {FILENAME}")
+        FIRST_RUN = False
+    else:
+        # get only the new/changed data to publish
+        df_to_publish = upsert1(df_cleaned, FILENAME)
+
+    if df_to_publish.empty:
+        print("No new price updates to publish.")
+        return
+        
+    print(f"Publishing {len(df_to_publish)} records to topic '{MQTT_TOPIC}'...")
+    for index, row in df_to_publish.iterrows():
+        # Convert the row to a GeoJSON 
+        feature = to_geojson(row)
+        if feature:
+            # Serialize the object to a JSON string
+            payload = json.dumps(feature)
+            client.publish(MQTT_TOPIC, payload)
+            print(f"Published record {index + 1}: \n {payload} \n")
             time.sleep(PUBLISH_DELAY)
-        print(" Finished publishing all data. Waiting for the next API call...\n")
+
+    print("Finished publishing all data. Waiting for the next API call...\n")
 # Run
 if __name__ == "__main__":
     while True:
         fetch_publish()
+        print(f"Waiting for {FETCH_INTERVAL} seconds before next API call.")
         time.sleep(FETCH_INTERVAL)
