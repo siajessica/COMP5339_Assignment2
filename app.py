@@ -42,24 +42,21 @@ def parse_timestamp(ts):
     return datetime.strptime(ts, "%d/%m/%Y %H:%M:%S")
 
 def update_feature_map(record):
-    key = (record['stationid'], record['fueltype'])
-    new_time = parse_timestamp(record['lastupdated'])
+    properties = record.get('properties', {})
+    if 'stationid' in properties and 'fueltype' in properties:
+        key = (properties['stationid'], properties['fueltype'])
+        new_time = parse_timestamp(properties['lastupdated'])
 
-    existing = feature_map.get(key)
-    if existing:
-        old_time = parse_timestamp(existing['properties']['lastupdated'])
-        if new_time <= old_time:
-            return
-    
-    feature = {
-        "type": "Feature",
-        "geometry": {
-            "type": "Point",
-            "coordinates": [record["location.longitude"], record["location.latitude"]]
-        },
-        "properties": {k: v for k, v in record.items() if not k.startswith("location.")}
-    }
-    feature_map[key] = feature
+        existing = feature_map.get(key)
+        if existing:
+            old_time = parse_timestamp(existing['properties']['lastupdated'])
+            if new_time <= old_time:
+                return
+
+        feature = record
+        feature_map[key] = feature
+    else:
+        print(f"Skipping record: {properties}")
 
 def rebuild_geojson():
     geojson['features'] = list(feature_map.values())
