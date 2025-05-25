@@ -89,17 +89,16 @@ def start_mqtt():
     print("Listening for fuel updates... Press Ctrl+C to exit.")
     client.loop_forever()
 
-# Precaution for Threading
 def main():
     st.set_page_config(layout="wide")
     st.title("Fuel Check NSW")
 
-    # Start the MQTT Subcriber (Blocking OS) running on the background
     if not st.session_state.connected:
         start_mqtt()
         st.session_state.connected = True
     
     m = folium.Map(location=st.session_state.center, zoom_start=14)
-    st.folium(m, height=600, width=1000)
+    st_data = st_folium(m, height=600, width=1000)
+    st.text("BELOW MAP")
 
 main()
