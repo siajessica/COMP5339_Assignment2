@@ -7,7 +7,7 @@ publisher:
 	python simple_retrieve_publish.py
 
 app:
-	streamlit run st.py
+	streamlit run app.py
 
 clean:
 	rm -f *.csv

@@ -1,9 +1,11 @@
 import paho.mqtt.client as mqtt
+import time
 import json
 import pandas as pd
 import streamlit as st
 import folium
 from streamlit_folium import st_folium
+from folium.features import DivIcon
 from datetime import datetime
 
 # MWTT CONFIG
@@ -13,18 +15,17 @@ OUTPUT_FILE = "received_geojson.json"
 
 feature_map = {} # Key: (stationid, fueltype), Value: feature 
 geojson = {"type": "FeatureCollection", "features": []}
+has_new_data = False
 
 # STREAMLIT CONFIG
 if 'connected' not in st.session_state: # Check if connected to MQTT
     st.session_state.connected = False
-if 'first_call' not in st.session_state:
-    st.session_state.first_call = True
 if 'map_center' not in st.session_state:
-    st.session_state.map_center = [-31.2532, 146.9211]
+    st.session_state.map_center = [-31.2532, 147.9211]
 if 'fuel_option' not in st.session_state:
-    st.session_state.fuel_option = {}
-if 'selected_fuel' not in st.session_state:
-    st.session_state.selected_fuel = '"E10'
+    st.session_state.fuel_option = ['DL', 'E10', 'E85', 'P95', 'P98', 'PDL', 'U91', 'LPG', 'B20', 'EV']
+if 'default_fuel' not in st.session_state:
+    st.session_state.default_fuel = '"E10'
 
 def save_to_file(data):
     with open(OUTPUT_FILE, 'w') as f:
@@ -43,30 +44,31 @@ def parse_timestamp(ts):
 
 def update_feature_map(record):
     properties = record.get('properties', {})
-    if 'stationid' in properties and 'fueltype' in properties:
-        key = (properties['stationid'], properties['fueltype'])
-        new_time = parse_timestamp(properties['lastupdated'])
+    if 'stationid' not in properties or 'fueltype' not in properties:
+        return 
+    
+    key = (properties['stationid'], properties['fueltype'])
+    new_time = parse_timestamp(properties['lastupdated'])
 
-        existing = feature_map.get(key)
-        if existing:
-            old_time = parse_timestamp(existing['properties']['lastupdated'])
-            if new_time <= old_time:
-                return
+    existing = feature_map.get(key)
+    if existing:
+        old_time = parse_timestamp(existing['properties']['lastupdated'])
+        if new_time <= old_time:
+            return
 
-        feature = record
-        feature_map[key] = feature
-    else:
-        print(f"Skipping record: {properties}")
+    feature = record
+    feature_map[key] = feature
 
 def rebuild_geojson():
+    global has_new_data
     geojson['features'] = list(feature_map.values())
-
-    if not st.session_state.fuel_option:
-        data = geojson.get("features", [])
-        st.session_state.fuel_option = sorted({f["properties"]["fueltype"] for f in data})
+    has_new_data = True
 
 def on_message(client, userdata, msg):
     print(f"\nMessage received on topic '{msg.topic}':")
+    if not msg.payload:
+        return
+    
     payload = msg.payload.decode()
     data = json.loads(payload)
     records = data if isinstance(data, list) else [data]
@@ -94,8 +96,64 @@ def main():
         start_mqtt()
         st.session_state.connected = True
     
-    m = folium.Map(location=st.session_state.center, zoom_start=14)
+    m = folium.Map(location=st.session_state.map_center, zoom_start=5)
+    
+    fuel_groups = {}
+    for feature in geojson['features']:
+        coordinate = feature["geometry"]["coordinates"] # long, lat
+        props = feature["properties"]
+        fuel_type = props['fueltype']
+        price = props["price"] 
+
+        # Pop-Up When Clicked
+        popup_html = f"""
+        <div style="width:200px;font-family:sans-serif">
+        <h4 style="margin:0">{props["name"]}</h4>
+        <small>{props["address"]}</small><br>
+        </div>
+        """
+
+        # Price Icon
+        price_marker = DivIcon(
+            icon_size=(40, 20),
+            icon_anchor=(0, 0),
+            html=f"""
+            <div style="
+                background: white;
+                border: 1px solid #555;
+                border-radius: 3px;
+                padding: 2px 4px;
+                font-size: 12px;
+                font-weight: bold;
+                color: #004;
+                box-shadow: 1px 1px 2px rgba(0,0,0,0.3);
+            ">{price}</div>
+            """
+        )
+
+        if fuel_type not in fuel_groups:
+            fuel_groups[fuel_type] = folium.FeatureGroup(
+                name=fuel_type,
+                show=(fuel_type==st.session_state.default_fuel)
+            )
+        folium.Marker(
+            location=[coordinate[1], coordinate[0]], # lat, long
+            icon=price_marker,
+            popup=folium.Popup(popup_html, max_width=250)
+        ).add_to(fuel_groups[fuel_type])
+
+    for fg in fuel_groups.values():
+        fg.add_to(m)
+    folium.LayerControl(collapsed=False).add_to(m)
+
     st_data = st_folium(m, height=600, width=1000)
-    st.text("BELOW MAP")
+
+    if has_new_data:
+        has_new_data = False
+        time.sleep(0.1)
+        st.experimental_rerun()
+
+    # For debugging
+    print(st_data)
 
 main()
