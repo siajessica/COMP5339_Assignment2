@@ -31,7 +31,7 @@ FIRST_RUN = True
 # MQTT SETUP
 client = mqtt.Client(client_id=MQTT_CLIENT_ID)
 client.connect(MQTT_BROKER, 1883, 60)
-
+client.loop_start() 
 
 # SPARK SESSION
 #spark = SparkSession.builder.appName("FuelData").getOrCreate()
@@ -199,14 +199,19 @@ def fetch_publish():
         if feature:
             # Serialize the object to a JSON string
             payload = json.dumps(feature)
-            client.publish(MQTT_TOPIC, payload)
+            client.publish(MQTT_TOPIC, payload, qos=2)
             print(f"Published record {index + 1}: \n {payload} \n")
             time.sleep(PUBLISH_DELAY)
 
     print("Finished publishing all data. Waiting for the next API call...\n")
 # Run
 if __name__ == "__main__":
-    while True:
-        fetch_publish()
-        print(f"Waiting for {FETCH_INTERVAL} seconds before next API call.")
-        time.sleep(FETCH_INTERVAL)
+    try:    
+        while True:
+            fetch_publish()
+            print(f"Waiting for {FETCH_INTERVAL} seconds before next API call.")
+            time.sleep(FETCH_INTERVAL)
+    except KeyboardInterrupt:
+        print("Process interrupted by user. Exiting...")
+        client.loop_stop()
+        client.disconnect()
