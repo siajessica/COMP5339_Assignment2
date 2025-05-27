@@ -3,6 +3,7 @@ Retrieve data using API, save it as .csv, preprocess and publish it to MQTT Brok
 Make sure MQTT is running 
 """
 
+import os
 import requests
 import pandas as pd
 import json
@@ -186,7 +187,7 @@ def fetch_publish():
         FIRST_RUN = False
     else:
         # get only the new/changed data to publish
-        df_to_publish = upsert1(df_cleaned, FILENAME)
+        df_to_publish = upsert(df_cleaned, FILENAME)
 
     if df_to_publish.empty:
         print("No new price updates to publish.")
