@@ -1,0 +1,11 @@
+{"stations": [
+        {"brandid": "", "stationid": "", "brand": "ASTRON", "code": "18542", "name": "Astron Beresfield", "address": "261 ANDERSON DR, BERESFIELD NSW 2322", "location": {"latitude": -32.7991122, "longitude": 151.645069
+            }, "isAdBlueAvailable": False
+        }
+    ], "prices": [
+        {"stationcode": "18542", "fueltype": "DL", "price": 150.9, "lastupdated": "28/05/2025 07: 45: 53"
+        },
+        {"stationcode": "18542", "fueltype": "E10", "price": 148.9, "lastupdated": "28/05/2025 07: 45: 53"
+        }
+    ]
+}

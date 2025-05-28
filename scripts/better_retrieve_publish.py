@@ -1,6 +1,10 @@
 """
-Retrieve data using API, save it as .csv, preprocess and publish it to MQTT Broker 
-Make sure MQTT is running 
+Better code for the Fuel API data retrieval and publishing to MQTT
+Main features (ongoing): 
+  Running on 2 APIs, all fuel data and newer one
+  First API iteration fetch all, publish to broker
+  Second API iteration just update the newest one, publish to broker
+  Ongoing (pyspark), too lazy to install java
 """
 
 import requests
@@ -15,8 +19,6 @@ from datetime import datetime
 #from pyspark.sql import SparkSession
 #import pyspark.sql.functions as ps
 
-# Make sure MQTT is running !!!
-
 # CONFIGURATION
 API_KEY_FUEL = "66e33UefJsXEALZf7cKeTjGP17qXdOx8"
 API_SECRET_FUEL = "Nost2rQ2z5iPcmar"
@@ -24,12 +26,11 @@ AUTH_FUEL = "Basic NjZlMzNVZWZKc1hFQUxaZjdjS2VUakdQMTdxWGRPeDg6Tm9zdDJyUTJ6NWlQY
 MQTT_TOPIC = "NSW_fuel/all"
 MQTT_BROKER = "localhost"
 FILENAME = "all_fuel_data.csv"
-MQTT_CLIENT_ID = 'test'
 FETCH_INTERVAL = 60  # seconds
 PUBLISH_DELAY = 0.1  # seconds
 FIRST_RUN = True
 # MQTT SETUP
-client = mqtt.Client(client_id=MQTT_CLIENT_ID)
+client = mqtt.Client()
 client.connect(MQTT_BROKER, 1883, 60)
 
 
@@ -39,11 +40,6 @@ client.connect(MQTT_BROKER, 1883, 60)
 # HELPER FUNCTIONS
 
 def crawler(url, params=None, headers=None, to_json=False):
-    """
-    Getting the accesstoken from the Fuel API security https://api.nsw.gov.au/Documentation/GenerateHar/22
-    Returns:
-        tuple: access token generated from the Fuel API security
-    """
     try:
         response = requests.get(url, params=params, headers=headers)
         response.raise_for_status()
@@ -109,7 +105,7 @@ def FuelStationIntegration(access_token, API_KEY_FUEL, get_new_price=True):
         print("No data found in the API response.")
         return pd.DataFrame()
 
-    merged_df = pd.merge(df_station_api, df_prices_api, left_on="code", right_on="stationcode", how="inner")
+    merged_df = pd.merge(df_station_api, df_prices_api, left_on="code", right_on="stationcode", how="right")
     return merged_df
 
 def cleaning(df):
@@ -127,35 +123,75 @@ def upsert(df, current_df):
     merged_df.to_csv(FILENAME, index=False)
     return df
 
+def upsert1(df_new, df_existing, filename=FILENAME):
+    keys = ['stationcode', 'fueltype']
+    df_new = df_new.dropna(subset=keys)
+
+    df_combined = pd.concat([df_existing, df_new], ignore_index=True)
+    df_updated_all = df_combined.drop_duplicates(subset=keys, keep='last')
+
+    df_updated_all.to_csv(filename, index=False)
+
+    # Find rows that were changed 
+    df_existing_keyed = df_existing.set_index(keys)
+    df_new_keyed = df_new.set_index(keys)
+
+    changed_keys = []
+    for key in df_new_keyed.index:
+        if key in df_existing_keyed.index:
+            old_row = df_existing_keyed.loc[key]
+            new_row = df_new_keyed.loc[key]
+            if (old_row['price'] != new_row['price']) or (old_row['lastupdated'] != new_row['lastupdated']):
+                changed_keys.append(key)
+    
+    df_changes = df_updated_all.set_index(keys).loc[changed_keys].reset_index()
+
+    return df_changes
+
 def fetch_publish():
-    """
-    Main function for MQTT broker
-    Run GetFuelAccessToken, safe the output to new dataframe as new .csv in df
-    Send output from df to MTQQ broker in batch with 0.1 delay
-    """
-    access_token = GetFuelAccessToken(AUTH_FUEL)
-    df = FuelStationIntegration(access_token, API_KEY_FUEL, get_new_price=not FIRST_RUN)
-    #df.to_csv(FILENAME, index=False)
-    if df.empty:
-        print("No new data found, Waiting for API call...")
-        return
-    else: 
-        print(df.head)
-        df = cleaning(df)
-        df.to_csv(FILENAME, index=False)
-        print(f"Saved {len(df)} records to {FILENAME}")
-        batch_size = max(1, len(df) // 1) # send all in a single batch
-        # Publish in batches
-        for i in range(0, len(df), batch_size):
-            batch_df = df.iloc[i:i + batch_size].copy()
-            batch_records = []
-            for _, row in batch_df.iterrows():
-                row_dict = row.to_dict()
-                batch_records.append(row_dict)
-            client.publish(MQTT_TOPIC, json.dumps(batch_records))
-            print(f" Published batch {i // batch_size + 1}: {len(batch_records)} records")
-            time.sleep(PUBLISH_DELAY)
-        print(" Finished publishing all data. Waiting for the next API call...\n")
+    global FIRST_RUN
+    try:
+        access_token = GetFuelAccessToken(AUTH_FUEL)
+        df = FuelStationIntegration(access_token, API_KEY_FUEL, get_new_price=not FIRST_RUN)
+        #df.to_csv(FILENAME, index=False)
+        if df.empty:
+            print("No new data found, Waiting for API call...")
+            return
+        else: 
+            print(df.head)
+            if FIRST_RUN:
+                df = cleaning(df)
+                df.to_csv(FILENAME, index=False)
+                print(f"Saved {len(df)} records to {FILENAME}")
+                batch_size = len(df)
+                # Create a list to hold all the records
+                batch_records = []
+                for _, row in df.iterrows():
+                    row_dict = row.to_dict()
+                    batch_records.append(row_dict)
+
+                # Publish the entire batch as a single message
+                client.publish(MQTT_TOPIC, json.dumps(batch_records))
+                print(f"Published {len(batch_records)} records in one batch")
+                time.sleep(PUBLISH_DELAY)
+            else:
+                current_df = pd.read_csv(FILENAME)
+                df = upsert1(df, current_df)
+                print(f"Publishing {len(df)} records to topic '{MQTT_TOPIC}' in 0.1 delay...")
+                # Publish in delay
+                for index, row in df.iterrows():
+                    row_dict = row.to_dict()
+                    payload = json.dumps(row_dict)
+                    client.publish(MQTT_TOPIC, payload)
+                    print(f" Published record {index + 1}/{len(df)}")
+                    time.sleep(PUBLISH_DELAY)
+
+            print(" Finished publishing all data. Waiting for the next API call...\n")
+            FIRST_RUN = False
+
+    except Exception as e:
+        print(f"Error occurred: {e}")
+
 # Run
 if __name__ == "__main__":
     while True:

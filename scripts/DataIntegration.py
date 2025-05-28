@@ -1,13 +1,15 @@
-import requests
 import pandas as pd
 import argparse
 import os
-import pandas as pd
 import numpy
 import csv
 import requests
 from bs4 import BeautifulSoup
 import re
+
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import to_timestamp, col
+from pyspark.sql.types import DoubleType
 
 from datetime import datetime
 def crawler(url , params = None, headers = None, to_json = False):
@@ -42,7 +44,7 @@ def GetFuelAccessToken(AUTH_FUEL):
     response = crawler(URL_SECURITY, params=querystring, headers=headers, to_json=True)
     return response["access_token"]
 
-def FuelStationIntegration(access_token, API_KEY_FUEL, get_new_price = True):
+def FuelStationIntegration(access_token, API_KEY_FUEL, get_new_price = True, spark = None, process_with_spark = True):
     """
     Getting the Lattitude and Longitude from the Fuel API security https://api.nsw.gov.au/Documentation/GenerateHar/22
     Returns:
@@ -62,40 +64,54 @@ def FuelStationIntegration(access_token, API_KEY_FUEL, get_new_price = True):
         'requesttimestamp': datetime.utcnow().strftime('%d/%m/%Y %I:%M:%S %p')
     }
     
-    print(headers)
     resp = crawler(url=url, headers=headers, to_json=True)
     
-    stations = resp.get("stations", []) 
-    df_station_api = pd.json_normalize(stations) 
-    
-    prices = resp.get("prices", []) 
-    df_prices_api = pd.json_normalize(prices) 
-    
-    merged_df = pd.merge(df_station_api, df_prices_api, left_on="code", right_on="stationcode", how="inner")
-    # merged_df = merged_df.drop(columns=["state_y"]).rename(columns={"state_x": "state"})
+    if process_with_spark:
+        if spark is None:
+            spark = SparkSession.builder.appName("FuelData").getOrCreate()
+            
+        df_stations = spark.createDataFrame(resp["stations"])
+        df_prices = spark.createDataFrame(resp["prices"])
 
+        df_stations = df_stations.withColumn("code", col("code").cast("string"))
+        df_prices = df_prices.withColumn("stationcode", col("stationcode").cast("string"))
+
+        merged_df = df_prices.join(df_stations, df_prices.stationcode == df_stations.code, how="inner")
+        merged_df = merged_df.withColumn("latitude", col("location.latitude")) \
+                    .withColumn("longitude", col("location.longitude"))
+    else:
+        stations = resp.get("stations", []) 
+        prices = resp.get("prices", []) 
+        
+        df_station_api = pd.json_normalize(stations) 
+        df_prices_api = pd.json_normalize(prices) 
+        
+        if(len(df_prices_api) > 0 and len(df_station_api)):
+            merged_df = pd.merge(df_station_api, df_prices_api, left_on="code", right_on="stationcode", how="right")
     return merged_df
 
-def cleaning(df):
-    # Drop rows with any missing values
-    df = df.dropna()
-
-    # Drop 'code' column if identical to 'stationcode'
-    if 'code' in df.columns and (df['code'] == df['stationcode']).all():
-        df = df.drop(columns=['code'])
-
-    # Drop exact duplicate rows on selected subset
-    df = df.drop_duplicates(subset=['brand', 'stationid', 'address', 'fueltype', 'lastupdated'])
-
-    # Convert date column format
-    df['lastupdated'] = pd.to_datetime(df['lastupdated'], dayfirst=True)
-
-    # Remove rows where 'price' is non-positive
-    df = df[df['price'] > 0]
-
+def cleaning(df, process_with_spark = True):
+    """
+    Looking for any duplicates and whether prices is not valid (less than 0)
+    """
+    
+    if process_with_spark == False:
+        df = df.dropna()
+        if 'code' in df.columns and (df['code'] == df['stationcode']).all():
+            df = df.drop(columns=['code'])
+            
+        df = df.drop_duplicates(subset=['brand', 'stationid', 'address', 'fueltype', 'lastupdated'])
+        df['lastupdated'] = pd.to_datetime(df['lastupdated'], dayfirst=True)
+        df = df[df['price'] > 0]
+    else:
+        df = df.dropna()
+        if 'code' in df.columns and df.select((col('code') == col('stationcode')).alias('match')).agg({'match': 'min'}).collect()[0][0]:
+            df = df.drop('code')
+        df = df.dropDuplicates(['brand', 'stationid', 'address', 'fueltype', 'lastupdated'])
+        df = df.withColumn('lastupdated', to_timestamp(col('lastupdated'), 'dd/MM/yyyy HH:mm:ss'))
+        df = df.withColumn('price', col('price').cast(DoubleType()))
+        df = df.filter(col('price') > 0)
     return df
-
-
 
 if __name__ == "__main__":
     API_KEY_FUEL = "66e33UefJsXEALZf7cKeTjGP17qXdOx8"
@@ -108,8 +124,8 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    access_token = GetFuelAccessToken(AUTH_FUEL)
     
+    access_token = GetFuelAccessToken(AUTH_FUEL)
     df_station_details = FuelStationIntegration(access_token, API_KEY_FUEL, get_new_price=args.get_new_price)
     cleaning(df_station_details)
     df_station_details.to_csv(args.output, index=False)
