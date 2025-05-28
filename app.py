@@ -19,12 +19,10 @@ OUTPUT_FILE = "received_geojson.json"
 # STREAMLIT CONFIG
 if 'connected' not in st.session_state: # Check if connected to MQTT
     st.session_state.connected = False
-# if 'first_call' not in st.session_state:
-#     st.session_state.first_call = True
 if 'map_center' not in st.session_state:
     st.session_state.map_center = [-33.8688, 151.2093]
 if 'fuel_option' not in st.session_state:
-    st.session_state.fuel_option = []
+    st.session_state.fuel_option = ['B20', 'DL', 'E10', 'E85', 'EV', 'LPG', 'P95', 'P98', 'PDL', 'U91']
 if 'selected_fuel' not in st.session_state:
     st.session_state.selected_fuel = 'E10'
 if 'message_queue' not in st.session_state:
@@ -33,6 +31,8 @@ if 'stations_data' not in st.session_state:
     st.session_state.stations_data = {}
 if 'previous_map_data' not in st.session_state:
     st.session_state.previous_map_data = {}
+if 'open_popup' not in st.session_state:
+    st.session_state.open_popup = None
 
 
 def on_connect(client, userdata, flags, rc):
@@ -124,6 +124,14 @@ def create_popup(primary_station_data, all_fuels_at_station):
     popup_html += "</div>"
     return popup_html
 
+def is_current_popup(station_data):
+    if st.session_state.open_popup:
+        ret =  (st.session_state.open_popup['lat'] == station_data['lat'] and
+                st.session_state.open_popup['lng'] == station_data['lon'])
+        if ret:
+            print(f"Current popup matches: {station_data['name']}")
+        return ret
+    return False
 
 def create_feature_group(map_data):
     feature_group = folium.FeatureGroup(name="Fuel Stations")
@@ -162,7 +170,8 @@ def create_feature_group(map_data):
             folium.Marker(
                 location=[station_data['lat'], station_data['lon']],
                 icon=price_marker,
-                popup=folium.Popup(popup_html, max_width=300)
+                popup=folium.Popup(popup_html, max_width=300, sticky=True,
+                                   show=is_current_popup(station_data))
             ).add_to(feature_group)
             
             processed_stations.add(base_station_id)
@@ -170,7 +179,7 @@ def create_feature_group(map_data):
     return feature_group
 
 
-@st.experimental_fragment(run_every=0.1)
+@st.experimental_fragment(run_every=1)
 def draw_map():
     if not st.session_state.message_queue.empty():
         record = st.session_state.message_queue.get_nowait()
@@ -189,21 +198,15 @@ def draw_map():
         base_map, 
         height=600, 
         width=1000,
-        center=st.session_state.map_center,
-        zoom=14,
         feature_group_to_add=feature_group,
-        returned_objects=["bounds"],
+        returned_objects=["bounds", "last_object_clicked"],
         key="fuel_map"
     )
+
+    st.session_state.open_popup = map_data.get('last_object_clicked')
+    print(f"Open popup: {st.session_state.open_popup}")
+
     st.session_state.previous_map_data = map_data
-
-    if map_data and map_data.get('center'):
-        st.session_state.map_center = [
-            map_data['center']['lat'], 
-            map_data['center']['lng']
-        ]
-
-
 
 def main():    
     st.set_page_config(layout="wide")
@@ -214,11 +217,12 @@ def main():
 
     print(st.session_state.fuel_option)
     if st.session_state.fuel_option:
-        st.session_state.selected_fuel = st.selectbox(
+        selected_fuel = st.selectbox(
             "Select Fuel Type:",
-            st.session_state.fuel_option,
-            index=st.session_state.fuel_option.index(st.session_state.selected_fuel)
+            options=st.session_state.fuel_option,
+            key="selected_fuel"
         )
+    print(st.session_state.selected_fuel)
 
     draw_map()
 
