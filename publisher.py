@@ -29,9 +29,11 @@ client = mqtt.Client(client_id=MQTT_CLIENT_ID)
 client.connect(MQTT_BROKER, 1883, 60)
 client.loop_start() 
 
-
-# SPARK SESSION
-#spark = SparkSession.builder.appName("FuelData").getOrCreate()
+# PYSPARK LIBRARIES please uncomment this when using spark
+# from pyspark.sql import SparkSession
+# from pyspark.sql.functions import to_timestamp, col
+# from pyspark.sql.types import DoubleType
+# import pyspark.pandas as ps
 
 # HELPER FUNCTIONS
 
@@ -132,6 +134,8 @@ def DataIntegration(resp, spark = None, process_with_spark = 0):
         else:
             return None
     else:
+        if spark is None:
+            spark = SparkSession.builder.appName("FuelData").getOrCreate()
         # Processing with pandas installed in spark
         df_stations_pd = pd.json_normalize(resp.get("stations", []))
         df_prices_pd = pd.json_normalize(resp.get("prices", []))
@@ -157,24 +161,23 @@ def cleaning(df, process_with_spark = 0):
         df = df.drop_duplicates(subset=['brand', 'stationid', 'address', 'fueltype', 'lastupdated'])
         # df['lastupdated'] = pd.to_datetime(df['lastupdated'], dayfirst=True)
         df = df[df['price'] > 0]
-    # elif process_with_spark == 1:
-    #     df = df.dropna()
-    #     if 'code' in df.columns and df.select((col('code') == col('stationcode')).alias('match')).agg({'match': 'min'}).collect()[0][0]:
-    #         df = df.drop('code')
-    #     df = df.dropDuplicates(['brand', 'stationid', 'address', 'fueltype', 'lastupdated'])
-    #     df = df.withColumn('lastupdated', to_timestamp(col('lastupdated'), 'dd/MM/yyyy HH:mm:ss'))
-    #     df = df.withColumn('price', col('price').cast(DoubleType()))
-    #     df = df.filter(col('price') > 0)
-    # elif process_with_spark == 2:
-    #     import pyspark.pandas as ps
-    #     df = df.dropna()
-    #     if 'code' in df.columns:
-    #         if (df['code'] == df['stationcode']).all():
-    #             df = df.drop(columns=['code'])
-    #     df = df.drop_duplicates(subset=['brand', 'stationid', 'address', 'fueltype', 'lastupdated'])
-    #     df['lastupdated'] = ps.to_datetime(df['lastupdated'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
-    #     df['price'] = df['price'].astype(float)
-    #     df = df[df['price'] > 0]
+    elif process_with_spark == 1:
+        df = df.dropna()
+        if 'code' in df.columns and df.select((col('code') == col('stationcode')).alias('match')).agg({'match': 'min'}).collect()[0][0]:
+            df = df.drop('code')
+        df = df.dropDuplicates(['brand', 'stationid', 'address', 'fueltype', 'lastupdated'])
+        df = df.withColumn('lastupdated', to_timestamp(col('lastupdated'), 'dd/MM/yyyy HH:mm:ss'))
+        df = df.withColumn('price', col('price').cast(DoubleType()))
+        df = df.filter(col('price') > 0)
+    elif process_with_spark == 2:
+        df = df.dropna()
+        if 'code' in df.columns:
+            if (df['code'] == df['stationcode']).all():
+                df = df.drop(columns=['code'])
+        df = df.drop_duplicates(subset=['brand', 'stationid', 'address', 'fueltype', 'lastupdated'])
+        df['lastupdated'] = ps.to_datetime(df['lastupdated'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
+        df['price'] = df['price'].astype(float)
+        df = df[df['price'] > 0]
     return df
 
 def upsert(df_new, df_existing, filename=FILENAME):
@@ -228,7 +231,6 @@ def fetch_publish():
     """
     global FIRST_RUN
     access_token = GetFuelAccessToken(AUTH_FUEL)
-    # df_api = FuelStationIntegration(access_token, API_KEY_FUEL, get_new_price=not FIRST_RUN)
     resp = FuelStationRetrieval(access_token, API_KEY_FUEL, get_new_price=not FIRST_RUN)
     df_api = DataIntegration(resp)
     
