@@ -10,11 +10,6 @@ import json
 import time
 import paho.mqtt.client as mqtt
 from datetime import datetime
-#import pytz
-#sydney_tz = pytz.timezone("Australia/Sydney")
-
-#from pyspark.sql import SparkSession
-#import pyspark.sql.functions as ps
 
 # Make sure MQTT is running !!!
 
@@ -32,6 +27,7 @@ FIRST_RUN = True
 # MQTT SETUP
 client = mqtt.Client(client_id=MQTT_CLIENT_ID)
 client.connect(MQTT_BROKER, 1883, 60)
+client.loop_start() 
 
 
 # SPARK SESSION
@@ -167,9 +163,9 @@ def to_geojson(row):
 
 def fetch_publish():
     """This function retrieves fuel station data from the API, cleans it, and publishes it to an MQTT topic.
-    IF FIRST_RUN: GET ALL DATA from /prices API
-    ELSE: GET ONLY NEW/CHANGED DATA from prices/new API
-    as GEOJSON
+    IF FIRST_RUN: get all data /prices API
+    ELSE: get only new/changed data from prices/new API
+    as GeoJSON
     """
     global FIRST_RUN
     access_token = GetFuelAccessToken(AUTH_FUEL)
@@ -200,14 +196,19 @@ def fetch_publish():
         if feature:
             # Serialize the object to a JSON string
             payload = json.dumps(feature)
-            client.publish(MQTT_TOPIC, payload)
+            client.publish(MQTT_TOPIC, payload, qos=2) # Qualitiy of Service 2 for reliable publishing
             print(f"Published record {index + 1}: \n {payload} \n")
             time.sleep(PUBLISH_DELAY)
 
     print("Finished publishing all data. Waiting for the next API call...\n")
 # Run
 if __name__ == "__main__":
-    while True:
-        fetch_publish()
-        print(f"Waiting for {FETCH_INTERVAL} seconds before next API call.")
-        time.sleep(FETCH_INTERVAL)
+    try:    
+        while True:
+            fetch_publish()
+            print(f"Waiting for {FETCH_INTERVAL} seconds before next API call.")
+            time.sleep(FETCH_INTERVAL)
+    except KeyboardInterrupt:
+        print("Process interrupted by user. Exiting...")
+        client.loop_stop()
+        client.disconnect()
