@@ -70,12 +70,13 @@ def GetFuelAccessToken(AUTH_FUEL):
     response = crawler(URL_SECURITY, params=querystring, headers=headers, to_json=True)
     return response["access_token"]
 
-def FuelStationIntegration(access_token, API_KEY_FUEL, get_new_price=True):
+def FuelStationRetrieval(access_token, API_KEY_FUEL, get_new_price = True):
     """
-    Getting the latitude and longitude from the Fuel API
+    Getting the Lattitude and Longitude from the Fuel API security https://api.nsw.gov.au/Documentation/GenerateHar/22
     Returns:
         DataFrame: containing the station details
     """
+    
     if not get_new_price:
         url = "https://api.onegov.nsw.gov.au/FuelPriceCheck/v1/fuel/prices"
     else:
@@ -88,25 +89,60 @@ def FuelStationIntegration(access_token, API_KEY_FUEL, get_new_price=True):
         'transactionid': "1234567890",
         'requesttimestamp': datetime.utcnow().strftime('%d/%m/%Y %I:%M:%S %p')
     }
-
-    print(headers)
+    
     resp = crawler(url=url, headers=headers, to_json=True)
-    
-    stations = resp.get("stations", [])
-    prices = resp.get("prices", [])
+    return resp
 
-    if not stations or not prices:
-        print("No data found in the response.")
-        return pd.DataFrame()
-    
-    df_station_api = pd.json_normalize(stations)
-    df_prices_api = pd.json_normalize(prices)
+def DataIntegration(resp, spark = None, process_with_spark = 0):
+    """
+    Processing the Data. Including merging the data of station and prices
+    Returns:
+        DataFrame: containing the station details
+    """
+    if process_with_spark == 0:
+        #Processing with normal pandas library
+        stations = resp.get("stations", []) 
+        prices = resp.get("prices", []) 
+        
+        df_station_api = pd.json_normalize(stations) 
+        df_prices_api = pd.json_normalize(prices) 
+        
+        if(len(df_prices_api) > 0 and len(df_station_api)> 0 ):
+            merged_df = pd.merge(df_station_api, df_prices_api, left_on="code", right_on="stationcode", how="right")
+        else:
+            return None
+        
+    elif process_with_spark == 1:
+        # Processing with pyspark dataframe
+        if spark is None:
+            spark = SparkSession.builder.appName("FuelData").getOrCreate()
+        
+        if len(resp["stations"]) <= 0 or len(resp["prices"]) <= 0:
+            return None
+        df_stations = spark.createDataFrame(resp["stations"])
+        df_prices = spark.createDataFrame(resp["prices"])
 
-    if df_station_api.empty or df_prices_api.empty:
-        print("No data found in the API response.")
-        return pd.DataFrame()
+        df_stations = df_stations.withColumn("code", col("code").cast("string"))
+        df_prices = df_prices.withColumn("stationcode", col("stationcode").cast("string"))
 
-    merged_df = pd.merge(df_station_api, df_prices_api, left_on="code", right_on="stationcode", how="inner")
+        if df_prices.count() > 0 and df_stations.count() > 0:
+            merged_df = df_prices.join(df_stations, df_prices.stationcode == df_stations.code, how="inner")
+            merged_df = merged_df.withColumn("latitude", col("location.latitude")) \
+                        .withColumn("longitude", col("location.longitude"))
+        else:
+            return None
+    else:
+        # Processing with pandas installed in spark
+        df_stations_pd = pd.json_normalize(resp.get("stations", []))
+        df_prices_pd = pd.json_normalize(resp.get("prices", []))
+
+        df_stations_ps = ps.from_pandas(df_stations_pd)
+        df_prices_ps = ps.from_pandas(df_prices_pd)
+
+        df_stations_ps["code"] = df_stations_ps["code"].astype(str)
+        df_prices_ps["stationcode"] = df_prices_ps["stationcode"].astype(str)
+
+        merged_df = df_prices_ps.merge(df_stations_ps, left_on="stationcode", right_on="code", how="right")
     return merged_df
 
 def cleaning(df):
@@ -169,7 +205,10 @@ def fetch_publish():
     """
     global FIRST_RUN
     access_token = GetFuelAccessToken(AUTH_FUEL)
-    df_api = FuelStationIntegration(access_token, API_KEY_FUEL, get_new_price=not FIRST_RUN)
+    # df_api = FuelStationIntegration(access_token, API_KEY_FUEL, get_new_price=not FIRST_RUN)
+    resp = FuelStationRetrieval(access_token, API_KEY_FUEL, get_new_price=not FIRST_RUN)
+    df_api = DataIntegration(resp)
+    
     if df_api.empty:
         print("No data retrieved from API. Waiting for next interval.")
         return
