@@ -155,26 +155,26 @@ def cleaning(df, process_with_spark = 0):
             df = df.drop(columns=['code'])
             
         df = df.drop_duplicates(subset=['brand', 'stationid', 'address', 'fueltype', 'lastupdated'])
-        df['lastupdated'] = pd.to_datetime(df['lastupdated'], dayfirst=True)
+        # df['lastupdated'] = pd.to_datetime(df['lastupdated'], dayfirst=True)
         df = df[df['price'] > 0]
-    elif process_with_spark == 1:
-        df = df.dropna()
-        if 'code' in df.columns and df.select((col('code') == col('stationcode')).alias('match')).agg({'match': 'min'}).collect()[0][0]:
-            df = df.drop('code')
-        df = df.dropDuplicates(['brand', 'stationid', 'address', 'fueltype', 'lastupdated'])
-        df = df.withColumn('lastupdated', to_timestamp(col('lastupdated'), 'dd/MM/yyyy HH:mm:ss'))
-        df = df.withColumn('price', col('price').cast(DoubleType()))
-        df = df.filter(col('price') > 0)
-    elif process_with_spark == 2:
-        import pyspark.pandas as ps
-        df = df.dropna()
-        if 'code' in df.columns:
-            if (df['code'] == df['stationcode']).all():
-                df = df.drop(columns=['code'])
-        df = df.drop_duplicates(subset=['brand', 'stationid', 'address', 'fueltype', 'lastupdated'])
-        df['lastupdated'] = ps.to_datetime(df['lastupdated'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
-        df['price'] = df['price'].astype(float)
-        df = df[df['price'] > 0]
+    # elif process_with_spark == 1:
+    #     df = df.dropna()
+    #     if 'code' in df.columns and df.select((col('code') == col('stationcode')).alias('match')).agg({'match': 'min'}).collect()[0][0]:
+    #         df = df.drop('code')
+    #     df = df.dropDuplicates(['brand', 'stationid', 'address', 'fueltype', 'lastupdated'])
+    #     df = df.withColumn('lastupdated', to_timestamp(col('lastupdated'), 'dd/MM/yyyy HH:mm:ss'))
+    #     df = df.withColumn('price', col('price').cast(DoubleType()))
+    #     df = df.filter(col('price') > 0)
+    # elif process_with_spark == 2:
+    #     import pyspark.pandas as ps
+    #     df = df.dropna()
+    #     if 'code' in df.columns:
+    #         if (df['code'] == df['stationcode']).all():
+    #             df = df.drop(columns=['code'])
+    #     df = df.drop_duplicates(subset=['brand', 'stationid', 'address', 'fueltype', 'lastupdated'])
+    #     df['lastupdated'] = ps.to_datetime(df['lastupdated'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
+    #     df['price'] = df['price'].astype(float)
+    #     df = df[df['price'] > 0]
     return df
 
 def upsert(df_new, df_existing, filename=FILENAME):
