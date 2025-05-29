@@ -42,7 +42,7 @@ def on_connect(client, userdata, flags, rc):
     """
     if rc == 0:
         print("Connected to MQTT Broker!")
-        client.subscribe(MQTT_TOPIC)
+        client.subscribe(MQTT_TOPIC, qos=2) # Qualitiy of Service 2 for reliable subscribing
         st.session_state.connected = True
     else:
         print("Connection failed. Code:", rc)
