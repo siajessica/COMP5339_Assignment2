@@ -34,7 +34,6 @@ if 'previous_map_data' not in st.session_state:
 if 'open_popup' not in st.session_state:
     st.session_state.open_popup = None
 
-
 def on_connect(client, userdata, flags, rc):
     if rc == 0:
         print("Connected to MQTT Broker!")
@@ -69,24 +68,29 @@ def update_feature_map(record):
     props = record['properties']
     coords = record['geometry']['coordinates']
     
-    station_id = f"{props['stationid']}_{props['fueltype']}"
+    station_code = props['stationcode']
     
-    st.session_state.stations_data[station_id] = {
-        'lat': coords[1],
-        'lon': coords[0], 
-        'name': props['name'],
-        'brand': props.get('brand', ''),
-        'address': props['address'],
-        'fueltype': props['fueltype'],
+    if station_code not in st.session_state.stations_data:
+        st.session_state.stations_data[station_code] = {
+            'lat': coords[1],
+            'lon': coords[0], 
+            'name': props['name'],
+            'brand': props.get('brand', ''),
+            'address': props['address'],
+            'stationcode': props['stationcode'],
+            'isAdBlueAvailable': props['isAdBlueAvailable'],
+            'fuels': {}
+        }
+    
+    st.session_state.stations_data[station_code]['fuels'][props['fueltype']] = {
         'price': float(props['price']),
-        'lastupdated': props['lastupdated'],
-        'stationid': props['stationid'],
-        'isAdBlueAvailable': props['isAdBlueAvailable']
+        'lastupdated': props['lastupdated']
     }
     
     if props['fueltype'] not in st.session_state.fuel_option:
         st.session_state.fuel_option.append(props['fueltype'])
         st.session_state.fuel_option.sort()
+
 
 def is_within_map(lat, lon, map_data):
     if map_data and map_data['bounds']['_southWest']['lat'] and map_data['bounds']['_northEast']['lat']:
@@ -98,12 +102,19 @@ def is_within_map(lat, lon, map_data):
     else:        
         return True
 
-def get_all_fuels_for_station(base_station_id):
-    station_fuels = []
-    for station_id, station_data in st.session_state.stations_data.items():
-        if station_data['stationid'] == base_station_id:
-            station_fuels.append(station_data)
-    return sorted(station_fuels, key=lambda x: x['fueltype'])
+def get_all_fuels_for_station(station_code):
+    if station_code in st.session_state.stations_data:
+        station_data = st.session_state.stations_data[station_code]
+        station_fuels = []
+        for fuel_type, fuel_info in station_data['fuels'].items():
+            station_fuels.append({
+                'fueltype': fuel_type,
+                'price': fuel_info['price'],
+                'lastupdated': fuel_info['lastupdated'],
+            })
+        return sorted(station_fuels, key=lambda x: x['fueltype'])
+    return []
+
 
 def create_popup(primary_station_data, all_fuels_at_station):
     popup_html = f"""
@@ -128,24 +139,20 @@ def is_current_popup(station_data):
     if st.session_state.open_popup:
         ret =  (st.session_state.open_popup['lat'] == station_data['lat'] and
                 st.session_state.open_popup['lng'] == station_data['lon'])
-        if ret:
-            print(f"Current popup matches: {station_data['name']}")
         return ret
     return False
 
 def create_feature_group(map_data):
     feature_group = folium.FeatureGroup(name="Fuel Stations")
-    processed_stations = set()
     
-    for station_id, station_data in st.session_state.stations_data.items():
-        base_station_id = station_data['stationid']
-        
-        if (station_data.get('fueltype') == st.session_state.selected_fuel and 
-            base_station_id not in processed_stations and 
+    for station_code, station_data in st.session_state.stations_data.items():
+        if (st.session_state.selected_fuel in station_data['fuels'] and 
             is_within_map(station_data["lat"], station_data["lon"], map_data)):
             
-            all_fuels_at_station = get_all_fuels_for_station(base_station_id)
+            all_fuels_at_station = get_all_fuels_for_station(station_code)
             popup_html = create_popup(station_data, all_fuels_at_station)
+            
+            selected_fuel_price = station_data['fuels'][st.session_state.selected_fuel]['price']
             
             price_marker = DivIcon(
                 icon_size=(90, 20),
@@ -163,24 +170,22 @@ def create_feature_group(map_data):
                     justify-content: center;
                     align-items: center;
                     flex-direction: column;
-                "><div>{station_data['brand']}</div><div>{station_data['price']:.1f}</div></div>
+                "><div>{station_data['brand']}</div><div>{selected_fuel_price:.1f}</div></div>
                 """
             )
             
-            folium.Marker(
+            feature_group.add_child(folium.Marker(
                 location=[station_data['lat'], station_data['lon']],
                 icon=price_marker,
-                popup=folium.Popup(popup_html, max_width=300, sticky=True,
-                                   show=is_current_popup(station_data))
-            ).add_to(feature_group)
-            
-            processed_stations.add(base_station_id)
+                popup=folium.Popup(popup_html, max_width=300, sticky=True, show=is_current_popup(station_data))
+            ))
     
     return feature_group
 
 
-@st.experimental_fragment(run_every=1)
+@st.fragment(run_every=1)
 def draw_map():
+    
     if not st.session_state.message_queue.empty():
         record = st.session_state.message_queue.get_nowait()
         update_feature_map(record)
@@ -197,16 +202,15 @@ def draw_map():
     map_data = st_folium(
         base_map, 
         height=600, 
-        width=1000,
+        width="100%",
         feature_group_to_add=feature_group,
         returned_objects=["bounds", "last_object_clicked"],
         key="fuel_map"
     )
 
     st.session_state.open_popup = map_data.get('last_object_clicked')
-    print(f"Open popup: {st.session_state.open_popup}")
-
     st.session_state.previous_map_data = map_data
+
 
 def main():    
     st.set_page_config(layout="wide")
@@ -215,14 +219,12 @@ def main():
     if not st.session_state.connected:
         start_mqtt()
 
-    print(st.session_state.fuel_option)
     if st.session_state.fuel_option:
         selected_fuel = st.selectbox(
             "Select Fuel Type:",
             options=st.session_state.fuel_option,
             key="selected_fuel"
         )
-    print(st.session_state.selected_fuel)
 
     draw_map()
 
