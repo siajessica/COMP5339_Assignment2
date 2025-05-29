@@ -35,6 +35,11 @@ if 'open_popup' not in st.session_state:
     st.session_state.open_popup = None
 
 def on_connect(client, userdata, flags, rc):
+    """
+    Callback function for when the client connects to the MQTT broker.
+    - rc == 0 indicates a successful connection.
+    - Subscribes to the MQTT topic upon successful connection.
+    """
     if rc == 0:
         print("Connected to MQTT Broker!")
         client.subscribe(MQTT_TOPIC)
@@ -44,6 +49,11 @@ def on_connect(client, userdata, flags, rc):
         st.session_state.connected = False
 
 def on_message(client, userdata, msg):
+    """
+    Callback function for when a message is received from the MQTT broker.
+    - Decodes the JSON payload
+    - Enqueues each record for processing
+    """
     payload = msg.payload.decode()
     data = json.loads(payload)
     records = data if isinstance(data, list) else [data]
@@ -52,12 +62,20 @@ def on_message(client, userdata, msg):
         st.session_state.message_queue.put(rec)
 
 def start_mqtt():
+    """
+    Starts the MQTT client in a separate backgound daemon thread
+    to avoid blocking the Streamlit app.
+    """
     thread = threading.Thread(target=run_mqtt, daemon=True)
     ctx = get_script_run_ctx()
     add_script_run_ctx(thread, ctx)
     thread.start()
 
 def run_mqtt():
+    """
+    Initializes the MQTT client, sets up the connection and message callbacks,
+    and starts the MQTT loop to listen for messages.
+    """
     client = mqtt.Client()
     client.on_connect = on_connect
     client.on_message = on_message
@@ -65,6 +83,12 @@ def run_mqtt():
     client.loop_forever() 
 
 def update_feature_map(record):
+    """
+    Given the GEOJson record, extracts the geospatial properties and station metadata,
+    then update or insert station data into stations_data in the session state,
+    keyed by station code and keep track of fuel types
+    """
+
     props = record['properties']
     coords = record['geometry']['coordinates']
     
@@ -93,6 +117,11 @@ def update_feature_map(record):
 
 
 def is_within_map(lat, lon, map_data):
+    """
+    Check if the given latitude and longitude are within the bounds of the map_data.
+    Returns True if the coordinates are within the bounds or if no bounds exists, False otherwise.
+    """
+
     if map_data and map_data['bounds']['_southWest']['lat'] and map_data['bounds']['_northEast']['lat']:
         min_lat = map_data['bounds']['_southWest']['lat']
         min_lon = map_data['bounds']['_southWest']['lng']
@@ -103,6 +132,11 @@ def is_within_map(lat, lon, map_data):
         return True
 
 def get_all_fuels_for_station(station_code):
+    """
+    Given a station code, retrieves all fuel types and their prices for that station.
+    Returns a sorted list of dictionaries containing fuel type, price, and last updated time.
+    """
+
     if station_code in st.session_state.stations_data:
         station_data = st.session_state.stations_data[station_code]
         station_fuels = []
@@ -117,6 +151,12 @@ def get_all_fuels_for_station(station_code):
 
 
 def create_popup(primary_station_data, all_fuels_at_station):
+    """
+    Build and return an HTML string for the folium.Popup,
+    showing station name, brand, address, AdBlue availability,
+    and listing each fuel type with its price and timestamp.
+    """
+
     popup_html = f"""
     <div style="font-size: 12px;">
         <h6><b>{primary_station_data['name']}<b></h6>
@@ -136,6 +176,10 @@ def create_popup(primary_station_data, all_fuels_at_station):
     return popup_html
 
 def is_current_popup(station_data):
+    """
+    Check if the given station geosparial data matches the currently open popup in the session state.
+    Returns True if it matches, False otherwise.
+    """
     if st.session_state.open_popup:
         ret =  (st.session_state.open_popup['lat'] == station_data['lat'] and
                 st.session_state.open_popup['lng'] == station_data['lon'])
@@ -143,6 +187,12 @@ def is_current_popup(station_data):
     return False
 
 def create_feature_group(map_data):
+    """
+    Create a folium.FeatureGroup for containing a DivIcon marker and a popup
+    for each station that offers the selected fuel type and is within the map bounds.
+    Returns the feature group containing all markers.
+    """
+
     feature_group = folium.FeatureGroup(name="Fuel Stations")
     
     for station_code, station_data in st.session_state.stations_data.items():
@@ -185,6 +235,14 @@ def create_feature_group(map_data):
 
 @st.fragment(run_every=1)
 def draw_map():
+    """
+    A Streamlit fragment that draws the map with fuel stations which runs every second.
+    1. Checks and processes messages from the MQTT queue.
+    2. Creates a base folium.Map centered on the session_state.map_center.
+    3. Creates a feature group with markers for each fuel station that matches the
+    selected fuel type and within the map bounds.
+    4. Renders the map with the feature group and updates the session state with the last clicked object.
+    """
     
     if not st.session_state.message_queue.empty():
         record = st.session_state.message_queue.get_nowait()
@@ -213,6 +271,11 @@ def draw_map():
 
 
 def main():    
+    """
+    Configure Streamlit layout, ensure MQTT is running,
+    render fuel type selector, and draw the live map.
+    """
+
     st.set_page_config(layout="wide")
     st.title("Fuel Check NSW")
 
